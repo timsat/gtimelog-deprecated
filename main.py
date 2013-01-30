@@ -281,14 +281,11 @@ class TimeWindow(object):
                     self.earliest_timestamp = time
                 if self.min_timestamp <= time < self.max_timestamp:
                     self.items.append((time, entry))
-        # There's code that relies on entries being sorted.  The entries really
-        # should be already sorted in the file, but sometimes the user edits
-        # timelog.txt directly and introduces errors.
-        # XXX: instead of quietly resorting them we should inform the user if
-        # there are errors
+        # The entries really should be already sorted in the file
+        # XXX: instead of quietly resorting them we should inform the user
         # Note that we must preserve the relative order of entries with
         # the same timestamp: https://bugs.launchpad.net/gtimelog/+bug/708825
-        self.items.sort(key=itemgetter(0))
+        self.items.sort(key=itemgetter(0)) # there's code that relies on them being sorted
         f.close()
 
     def last_time(self):
@@ -577,7 +574,7 @@ class Reports(object):
         if entries:
             categories = entries.keys()
             categories.sort()
-            if categories[0] is None:
+            if categories[0] == None:
                 categories = categories[1:]
                 categories.append('No category')
                 e = entries.pop(None)
@@ -597,8 +594,7 @@ class Reports(object):
                     entry = entry[:1].upper() + entry[1:]
                     if estimated_column:
                         print >> output, (u"  %-46s  %-14s  %s" %
-                                    (entry, '-',
-                                     format_duration_short(duration)))
+                                    (entry, '-', format_duration_short(duration)))
                     else:
                         print >> output, (u"  %-61s  %+5s" %
                                     (entry, format_duration_short(duration)))
@@ -704,7 +700,7 @@ class Reports(object):
     def weekly_report_categorized(self, output, email, who,
                                   estimated_column=False):
         """Format a weekly report with entries displayed  under categories."""
-        week = self.window.min_timestamp.strftime('%V')
+        week = self.window.min_timestamp.strftime('%W')
         subject = 'Weekly report for %s (week %s)' % (who, week)
         return self._categorizing_report(output, email, who, subject,
                                          period_name='week',
@@ -721,7 +717,7 @@ class Reports(object):
 
     def weekly_report_plain(self, output, email, who, estimated_column=False):
         """Format a weekly report ."""
-        week = self.window.min_timestamp.strftime('%V')
+        week = self.window.min_timestamp.strftime('%W')
         subject = 'Weekly report for %s (week %s)' % (who, week)
         return self._plain_report(output, email, who, subject,
                                   period_name='week',
@@ -746,7 +742,7 @@ class Reports(object):
         # would give us translated names
         weekday_names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
         weekday = weekday_names[window.min_timestamp.weekday()]
-        week = window.min_timestamp.strftime('%V')
+        week = window.min_timestamp.strftime('%W')
         print >> output, "To: %(email)s" % {'email': email}
         print >> output, ("Subject: %(date)s report for %(who)s"
                           " (%(weekday)s, week %(week)s)"
@@ -825,10 +821,7 @@ class TimeLog(object):
             return False
 
     def get_mtime(self):
-        """Return the mtime of self.filename, if it exists.
-
-        Returns None if the file doesn't exist.
-        """
+        """Return the mtime of self.filename, or None if the file doesn't exist."""
         try:
             return os.stat(self.filename).st_mtime
         except OSError:
@@ -959,10 +952,7 @@ class TaskList(object):
             return False
 
     def get_mtime(self):
-        """Return the mtime of self.filename, if it exists.
-
-        Returns None if the file doesn't exist.
-        """
+        """Return the mtime of self.filename, or None if the file doesn't exist."""
         try:
             return os.stat(self.filename).st_mtime
         except OSError:
@@ -998,10 +988,11 @@ class RemoteTaskList(TaskList):
     Keeps a cached copy of the list in a local file, so you can use it offline.
     """
 
-    def __init__(self, url, cache_filename):
+    def __init__(self, url, cache_filename, filter_module):
         self.url = url
         TaskList.__init__(self, cache_filename)
         self.first_time = True
+        self.filter_module = filter_module
 
     def check_reload(self):
         """Check whether the task list needs to be reloaded.
@@ -1022,11 +1013,21 @@ class RemoteTaskList(TaskList):
         """Download the task list from the server."""
         if self.loading_callback:
             self.loading_callback()
+        raw_tasks_data = ''
         try:
-            urllib.urlretrieve(self.url, self.filename)
+            raw_tasks_data = urllib.urlopen(self.url).read().decode('utf8')
         except IOError:
             if self.error_callback:
                 self.error_callback()
+        if self.filter_module != None and self.filter_module:
+            print 'applying filter {}'.format(self.filter_module)
+            _filter = __import__(self.filter_module)
+            task_list = _filter.filter_raw_task_data(raw_tasks_data)
+        else:
+            print 'no filter defined'
+            task_list = raw_tasks_data
+        with codecs.open(self.filename, 'w', 'utf8') as tasks:
+            tasks.write(task_list)
         self.load()
         if self.loaded_callback:
             self.loaded_callback()
@@ -1056,6 +1057,7 @@ class Settings(object):
     virtual_midnight = datetime.time(2, 0)
 
     task_list_url = ''
+    task_list_filter = ''
     edit_task_list_cmd = ''
 
     show_office_hours = True
@@ -1090,14 +1092,13 @@ class Settings(object):
         config.set('gtimelog', 'virtual_midnight',
                    self.virtual_midnight.strftime('%H:%M'))
         config.set('gtimelog', 'task_list_url', self.task_list_url)
+        config.set('gtimelog', 'task_list_filter', self.task_list_filter)
         config.set('gtimelog', 'edit_task_list_cmd', self.edit_task_list_cmd)
         config.set('gtimelog', 'show_office_hours',
                    str(self.show_office_hours))
         config.set('gtimelog', 'show_tray_icon', str(self.show_tray_icon))
-        config.set('gtimelog', 'prefer_app_indicator',
-                   str(self.prefer_app_indicator))
-        config.set('gtimelog', 'prefer_old_tray_icon',
-                   str(self.prefer_old_tray_icon))
+        config.set('gtimelog', 'prefer_app_indicator', str(self.prefer_app_indicator))
+        config.set('gtimelog', 'prefer_old_tray_icon', str(self.prefer_old_tray_icon))
         config.set('gtimelog', 'report_style', str(self.report_style))
         config.set('gtimelog', 'start_in_tray', str(self.start_in_tray))
         return config
@@ -1119,6 +1120,7 @@ class Settings(object):
         self.virtual_midnight = parse_time(config.get('gtimelog',
                                                       'virtual_midnight'))
         self.task_list_url = config.get('gtimelog', 'task_list_url')
+        self.task_list_filter = config.get('gtimelog', 'task_list_filter')
         self.edit_task_list_cmd = config.get('gtimelog', 'edit_task_list_cmd')
         self.show_office_hours = config.getboolean('gtimelog',
                                                    'show_office_hours')
@@ -1407,10 +1409,7 @@ class MainWindow:
         # Try to prevent timer routines mucking with the buffer while we're
         # mucking with the buffer.  Not sure if it is necessary.
         self.lock = False
-        # I'm representing a tristate with two booleans (for config file
-        # backwards compat), let's normalize nonsensical states.
-        self.chronological = (settings.chronological
-                              and not settings.summary_view)
+        self.chronological = settings.chronological and not settings.summary_view
         self.summary_view = settings.summary_view
         self.show_tasks = settings.show_tasks
         self.looking_at_date = None
@@ -1527,7 +1526,7 @@ class MainWindow:
         else:
             today = self.looking_at_date
             window = self.timelog.window_for_day(today)
-        today = today.strftime('%A, %Y-%m-%d (week %V)')
+        today = today.strftime('%A, %Y-%m-%d (week %W)')
         self.current_view_label.set_text(today)
         if self.chronological:
             for item in window.all_entries():
@@ -1609,7 +1608,7 @@ class MainWindow:
             self.w('\nAt office today: ')
             hours = datetime.timedelta(hours=self.settings.hours)
             total = total_slacking + total_work
-            self.w("%s " % format_duration(total), 'duration')
+            self.w("%s " % format_duration(total), 'duration' )
             self.w('(')
             if total > hours:
                 self.w(format_duration(total - hours), 'duration')
@@ -1845,7 +1844,7 @@ class MainWindow:
         """
         if self.calendar_dialog.run() == GTK_RESPONSE_OK:
             y, m1, d = self.calendar.get_date()
-            day = datetime.date(y, m1 + 1, d)
+            day = datetime.date(y, m1+1, d)
         else:
             day = None
         self.calendar_dialog.hide()
@@ -1972,7 +1971,7 @@ class MainWindow:
                 command = command % arg
             else:
                 command += ' ' + arg
-        os.system(command + " &")
+        os.system(command)
 
     def on_reread_activate(self, widget):
         """File -> Reread"""
@@ -2312,7 +2311,7 @@ def main():
             print 'Loading cached remote tasks from %s' % (
                                os.path.join(configdir, 'remote-tasks.txt'))
         tasks = RemoteTaskList(settings.task_list_url,
-                               os.path.join(configdir, 'remote-tasks.txt'))
+                               os.path.join(configdir, 'remote-tasks.txt'), settings.task_list_filter)
     else:
         if opts.debug:
             print 'Loading tasks from %s' % os.path.join(configdir, 'tasks.txt')
